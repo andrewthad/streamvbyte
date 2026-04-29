@@ -1,70 +1,101 @@
 #include "streamvbyte.h"
 #include "streamvbyte_isadetection.h"
+#include "streamvbyte_shuffle_tables_encode.h"
 
 #include <string.h> // for memcpy
 
 #ifdef __clang__
+#pragma clang diagnostic ignored "-Wcast-align"
 #pragma clang diagnostic ignored "-Wdeclaration-after-statement"
 #endif
 
-#ifdef STREAMVBYTE_X64
-#include "streamvbyte_x64_encode.c"
-#endif
+static size_t svb_data_bytes_scalar(const uint32_t* in, uint32_t length);
 
-static uint8_t svb_encode_data(uint32_t val, uint8_t *__restrict__ *dataPtrPtr) {
-  uint8_t *dataPtr = *dataPtrPtr;
-  uint8_t code;
+STREAMVBYTE_TARGET_SSE41
+static inline size_t svb_control_SSE41 (__m128i lo, __m128i hi) {
+    const __m128i mask_01 = _mm_set1_epi8(0x01);
+    const __m128i mask_7F00 = _mm_set1_epi16(0x7F00);
 
-  if (val < (1 << 8)) { // 1 byte
-    *dataPtr = (uint8_t)(val);
-    *dataPtrPtr += 1;
-    code = 0;
-  } else if (val < (1 << 16)) { // 2 bytes
-    memcpy(dataPtr, &val, 2);   // assumes little endian
-    *dataPtrPtr += 2;
-    code = 1;
-  } else if (val < (1 << 24)) { // 3 bytes
-    memcpy(dataPtr, &val, 3);   // assumes little endian
-    *dataPtrPtr += 3;
-    code = 2;
-  } else { // 4 bytes
-    memcpy(dataPtr, &val, sizeof(uint32_t));
-    *dataPtrPtr += sizeof(uint32_t);
-    code = 3;
-  }
+    __m128i m0, m1;
+    size_t keys;
 
-  return code;
+    m0 = _mm_min_epu8(mask_01, lo);
+    m1 = _mm_min_epu8(mask_01, hi);
+    m0 = _mm_packus_epi16(m0, m1);
+    m0 = _mm_min_epi16(m0, mask_01); // convert 0x01FF to 0x0101
+    m0 = _mm_adds_epu16(m0, mask_7F00); // convert: 0x0101 to 0x8001, 0xFF01 to 0xFFFF
+    keys = (size_t)_mm_movemask_epi8(m0);
+    return keys;
 }
+STREAMVBYTE_UNTARGET_REGION
 
-static uint8_t *svb_encode_scalar(const uint32_t *in,
-                                  uint8_t *__restrict__ keyPtr,
-                                  uint8_t *__restrict__ dataPtr,
-                                  uint32_t count) {
-  if (count == 0)
-    return dataPtr; // exit immediately if no data
+STREAMVBYTE_TARGET_SSE41
+static size_t svb_data_bytes_SSE41 (const uint32_t* in, uint32_t count) {
+    size_t dataLen = 0;
 
-  uint8_t shift = 0; // cycles 0, 2, 4, 6, 0, 2, 4, 6, ...
-  uint8_t key = 0;
-  for (uint32_t c = 0; c < count; c++) {
-    if (shift == 8) {
-      shift = 0;
-      *keyPtr++ = key;
-      key = 0;
+    for (const uint32_t* end = &in[(count & ~7U)]; in != end; in += 8)
+    {
+        __m128i r0, r1;
+        size_t keys;
+
+        r0 = _mm_loadu_si128((const __m128i *) &in[0]);
+        r1 = _mm_loadu_si128((const __m128i *) &in[4]);
+
+        keys = svb_control_SSE41(r0, r1);
+        dataLen += len_lut[keys & 0xFF];
+        dataLen += len_lut[keys >> 8];
     }
-    uint32_t val = in[c];
-    uint8_t code = svb_encode_data(val, &dataPtr);
-    key |= code << shift;
-    shift += 2;
-  }
 
-  *keyPtr = key;  // write last key (no increment needed)
-  return dataPtr; // pointer to first unused data byte
+    dataLen += svb_data_bytes_scalar(in, count & 7);
+    return dataLen;
 }
+STREAMVBYTE_UNTARGET_REGION
 
+STREAMVBYTE_TARGET_SSE41
+static size_t streamvbyte_encode_SSE41 (const uint32_t* in, uint32_t count, uint8_t* out) {
+	uint32_t keyLen = (count >> 2) + (((count & 3) + 3) >> 2); // 2-bits per each rounded up to byte boundary
+	uint8_t *restrict keyPtr = &out[0];
+	uint8_t *restrict dataPtr = &out[keyLen]; // variable length data after keys
 
-#ifdef STREAMVBYTE_IS_ARM64
-#include "streamvbyte_arm_encode.c"
-#endif
+	for (const uint32_t* end = &in[(count & ~7U)]; in != end; in += 8)
+	{
+		__m128i r0, r1, r2, r3;
+		size_t keys;
+
+		r0 = _mm_loadu_si128((const __m128i*)&in[0]);
+		r1 = _mm_loadu_si128((const __m128i*)&in[4]);
+
+		keys = svb_control_SSE41(r0, r1);
+
+		r2 = _mm_loadu_si128((const __m128i*)&shuf_lut[(keys << 4) & 0x03F0]);
+		r3 = _mm_loadu_si128((const __m128i*)&shuf_lut[(keys >> 4) & 0x03F0]);
+		r0 = _mm_shuffle_epi8(r0, r2);
+		r1 = _mm_shuffle_epi8(r1, r3);
+
+		_mm_storeu_si128((__m128i *)dataPtr, r0);
+		dataPtr += len_lut[keys & 0xFF];
+		_mm_storeu_si128((__m128i *)dataPtr, r1);
+		dataPtr += len_lut[keys >> 8];
+
+		*((uint16_t*)keyPtr) = (uint16_t)keys;
+		keyPtr += 2;
+	}
+
+	// do remaining
+	uint32_t key = 0;
+	for(size_t i = 0; i < (count & 7); i++)
+	{
+		uint32_t dw = in[i];
+		uint32_t symbol = (dw > 0x000000FF) + (dw > 0x0000FFFF) + (dw > 0x00FFFFFF);
+		key |= symbol << (i + i);
+		memcpy(dataPtr, &dw, 4);
+		dataPtr += 1 + symbol;
+	}
+	memcpy(keyPtr, &key, ((count & 7) + 3) >> 2);
+
+	return (size_t)(dataPtr - out);
+}
+STREAMVBYTE_UNTARGET_REGION
 
 static size_t svb_data_bytes_scalar(const uint32_t* in, uint32_t length) {
    size_t db = 0;
@@ -77,61 +108,14 @@ static size_t svb_data_bytes_scalar(const uint32_t* in, uint32_t length) {
    return db;
 }
 
-static size_t svb_data_bytes_0124_scalar(const uint32_t* in, uint32_t length) {
-   size_t db = 0;
-   for (uint32_t c = 0; c < length; c++) {
-      uint32_t val = in[c];
-
-      uint32_t bytes = (val > 0x00000000) + (val > 0x000000FF) + (val > 0x0000FFFF) * 2;
-      db += bytes;
-   }
-   return db;
-}
-
 size_t streamvbyte_compressedbytes(const uint32_t* in, uint32_t length) {
    // number of control bytes:
    size_t cb = (length + 3) / 4;
-
-#ifdef STREAMVBYTE_X64
-   if (streamvbyte_sse41()) {
-      return cb + svb_data_bytes_SSE41(in, length);
-   }
-#endif
-   return cb + svb_data_bytes_scalar(in, length);
+   return cb + svb_data_bytes_SSE41(in, length);
 }
-
-size_t streamvbyte_compressedbytes_0124(const uint32_t* in, uint32_t length) {
-   // number of control bytes:
-   size_t cb = (length + 3) / 4;
-
-   return cb + svb_data_bytes_0124_scalar(in, length);
-}
-
 
 // Encode an array of a given length read from in to out in streamvbyte format.
 // Returns the number of bytes written.
 size_t streamvbyte_encode(const uint32_t *in, uint32_t count, uint8_t *out) {
-#ifdef STREAMVBYTE_X64
-  if(streamvbyte_sse41()) {
-    return streamvbyte_encode_SSE41(in,count,out);
-  }
-#endif
-  uint8_t *keyPtr = out;
-  uint32_t keyLen = (count + 3) / 4;  // 2-bits rounded to full byte
-  uint8_t *dataPtr = keyPtr + keyLen; // variable byte data after all keys
-
-#if defined(STREAMVBYTE_IS_ARM64)
-
-  uint32_t count_quads = count / 4;
-  count -= 4 * count_quads;
-
-  for (uint32_t c = 0; c < count_quads; c++) {
-    dataPtr += streamvbyte_encode_quad(in, dataPtr, keyPtr);
-    keyPtr++;
-    in += 4;
-  }
-
-#endif
-
-  return (size_t)(svb_encode_scalar(in, keyPtr, dataPtr, count) - out);
+  return streamvbyte_encode_SSE41(in,count,out);
 }

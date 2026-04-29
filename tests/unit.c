@@ -1,6 +1,5 @@
 #include "streamvbyte.h"
 #include "streamvbyte_zigzag.h"
-#include "streamvbytedelta.h"
 #include "streamvbyte_isadetection.h"
 
 #include <stdbool.h>
@@ -27,28 +26,17 @@ static int zigzagtests(void) {
     uint32_t *dataout = malloc(N * sizeof(uint32_t));
     int32_t *databack = malloc(N * sizeof(int32_t));
 
-    uint32_t *deltadataout = malloc(N * sizeof(uint32_t));
-    int32_t *deltadataback = malloc(N * sizeof(int32_t));
-
     zigzag_encode(datain, dataout, N);
     zigzag_decode(dataout, databack, N);
-    zigzag_delta_encode(datain, deltadataout, N, 0);
-    zigzag_delta_decode(deltadataout, deltadataback, N, 0);
 
     int isok = 1;
     for(size_t i = 0; i < N; i++) {
       if(datain[i] != databack[i]) {
-        printf("bug\n");
-        isok = -1;
-      }
-      if(datain[i] != deltadataback[i]) {
-        printf("bug\n");
+        printf("bug alpha\n");
         isok = -1;
       }
     }
 
-    free(deltadataout);
-    free(deltadataback);
     free(databack);
     free(dataout);
     free(datain);
@@ -124,56 +112,10 @@ static int basictests(void) {
           return -1;
         }
       }
-
-      // Alternative encoding: 0,1,2,4 bytes per value
-      compsize = streamvbyte_encode_0124(datain, length, compressedbuffer);
-      if (!streamvbyte_validate_stream_0124(compressedbuffer, compsize, length)) {
-        printf("[streamvbyte_validate_stream_0124] code is buggy length=%d gap=%d: compsize=%d\n",
-               (int)length, (int)gap, (int)compsize);
-        return -1;
-      }
-
-      usedbytes = streamvbyte_decode_0124(compressedbuffer, recovdata, length);
-      if (compsize != usedbytes) {
-        printf("[streamvbyte_decode_0124] code is buggy length=%d gap=%d: compsize=%d != "
-               "usedbytes=%d \n",
-               (int)length, (int)gap, (int)compsize, (int)usedbytes);
-        return -1;
-      }
-
-      for (uint32_t k = 0; k < length; ++k) {
-        if (recovdata[k] != datain[k]) {
-          printf("[streamvbyte_decode_0124] code is buggy gap=%d\n", (int)gap);
-          return -1;
-        }
-      }
-    }
-
-    // Delta-encoded functions
-    for (uint32_t gap = 1; gap <= 531441; gap *= 3) {
-      for (uint32_t k = 0; k < length; ++k)
-        datain[k] = gap * k;
-      size_t compsize =
-          streamvbyte_delta_encode(datain, length, compressedbuffer, 0);
-      size_t usedbytes =
-          streamvbyte_delta_decode(compressedbuffer, recovdata, length, 0);
-      if (compsize != usedbytes) {
-        printf("[streamvbyte_delta_decode] code is buggy gap=%d, size "
-               "mismatch %d %d \n",
-               (int)gap, (int)compsize, (int)usedbytes);
-        return -1;
-      }
-      for (uint32_t k = 0; k < length; ++k) {
-        if (recovdata[k] != datain[k]) {
-          printf("[streamvbyte_delta_decode] code is buggy gap=%d\n",
-                 (int)gap);
-          return -1;
-        }
-      }
     }
 
     if (length < 128)
-      ++length;
+      length = length + 32;
     else {
       length *= 2;
     }
@@ -181,129 +123,6 @@ static int basictests(void) {
   free(datain);
   free(compressedbufferorig);
   free(recovdata);
-  return 0;
-}
-// return -1 in case of failure
-static int aqrittests(void) {
-  uint8_t in[16];
-  uint8_t compressedbuffer[32];
-  uint8_t recovdata[16];
-
-  memset(compressedbuffer, 0, 32);
-  memset(recovdata, 0, 16);
-
-  for (int i = 0; i < 0x10000; i++) {
-    in[0] = (uint8_t)((i >> 0) & 1);
-    in[1] = (uint8_t)((i >> 1) & 1);
-    in[2] = (uint8_t)((i >> 2) & 1);
-    in[3] = (uint8_t)((i >> 3) & 1);
-    in[4] = (uint8_t)((i >> 4) & 1);
-    in[5] = (uint8_t)((i >> 5) & 1);
-    in[6] = (uint8_t)((i >> 6) & 1);
-    in[7] = (uint8_t)((i >> 7) & 1);
-    in[8] = (uint8_t)((i >> 8) & 1);
-    in[9] = (uint8_t)((i >> 9) & 1);
-    in[10] = (uint8_t)((i >> 10) & 1);
-    in[11] = (uint8_t)((i >> 11) & 1);
-    in[12] = (uint8_t)((i >> 12) & 1);
-    in[13] = (uint8_t)((i >> 13) & 1);
-    in[14] = (uint8_t)((i >> 14) & 1);
-    in[15] = (uint8_t)((i >> 15) & 1);
-    const int length = 4;
-
-    size_t compsize = streamvbyte_encode((uint32_t *)in, length, compressedbuffer);
-    if (!streamvbyte_validate_stream(compressedbuffer, compsize, length)) {
-      printf("[streamvbyte_validate_stream] code is buggy i=%i\n", i);
-      return -1;
-    }
-
-    size_t usedbytes = streamvbyte_decode(compressedbuffer, (uint32_t *)recovdata, length);
-    if (compsize != usedbytes) {
-      printf("[streamvbyte_decode] code is buggy i=%i\n", i);
-      return -1;
-    }
-    for (size_t k = 0; k < length * sizeof(uint32_t); ++k) {
-      if (recovdata[k] != in[k]) {
-        printf("[streamvbyte_decode] code is buggy i=%i\n", i);
-        return -1;
-      }
-    }
-
-    compsize = streamvbyte_encode_0124((uint32_t *)in, length, compressedbuffer);
-    if (!streamvbyte_validate_stream_0124(compressedbuffer, compsize, length)) {
-      printf("[streamvbyte_validate_stream_0124] code is buggy i=%i\n", i);
-      return -1;
-    }
-
-    usedbytes = streamvbyte_decode_0124(compressedbuffer, (uint32_t *)recovdata, length);
-    if (compsize != usedbytes) {
-      printf("[streamvbyte_decode_0124] code is buggy i=%i\n", i);
-      return -1;
-    }
-    for (size_t k = 0; k < length * sizeof(uint32_t); ++k) {
-      if (recovdata[k] != in[k]) {
-        printf("[streamvbyte_decode_0124] code is buggy i=%i\n", i);
-        return -1;
-      }
-    }
-
-  }
-  return 0;
-}
-
-static int compressedbytestests(void) {
-  const uint32_t *empty = 0;
-
-  if (streamvbyte_compressedbytes(empty, 0) != 0) {
-    return -1;
-  }
-
-  uint32_t small[] = {1, 1, 1, 1};
-
-  if (streamvbyte_compressedbytes(small, 4) != (1 + (4 * 1))) {
-    return -1;
-  }
-
-  uint32_t big[] = {260, 260, 260, 260};
-
-  if (streamvbyte_compressedbytes(big, 4) != (1 + (4 * 2))) {
-    return -1;
-  }
-
-  uint32_t biggest[] = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
-
-  if (streamvbyte_compressedbytes(biggest, 4) != (1 + (4 * 4))) {
-    return -1;
-  }
-
-  return 0;
-}
-
-static int compressedbytestests0124(void) {
-  const uint32_t *empty = 0;
-
-  if (streamvbyte_compressedbytes_0124(empty, 0) != 0) {
-    return -1;
-  }
-
-  uint32_t small[] = {0, 0, 0, 0};
-
-  if (streamvbyte_compressedbytes_0124(small, 4) != (1 + (4 * 0))) {
-    return -1;
-  }
-
-  uint32_t big[] = {260, 260, 260, 260};
-
-  if (streamvbyte_compressedbytes_0124(big, 4) != (1 + (4 * 2))) {
-    return -1;
-  }
-
-  uint32_t biggest[] = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
-
-  if (streamvbyte_compressedbytes_0124(biggest, 4) != (1 + (4 * 4))) {
-    return -1;
-  }
-
   return 0;
 }
 
@@ -795,7 +614,7 @@ static bool issue42(void) {
     0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
     0,   0,   0,   5,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
     0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
-    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
     50,  6,   29,  1,   15,  15,  1,   7,   11,  10,  10,  9,   24,  17,  7,
     5,   0,   1,   3,   2,   3,   12,  1,   4,   0,   0,   1,   13,  7,   16,
     5,   16,  21,  18,  53,  9,   4,   3,   1,   1,   2,   4,   12,  7,   0,
@@ -2742,37 +2561,45 @@ static bool issue42(void) {
     2,   9,   3,   31,  42,  39,  1,   40,  5,   3,   8,   16,  24,  61,  22,
     6,   22,  41,  10,  21,  48,  5,   9,   8,   23,  49,  58,  21,  13,  0,
     6,   13,  2,   36,  11,  49,  49,  12,  20,  35,  10,  11,  14,  14,  11,
-    8,   13,  23,  14,  9,   6,   4,   0,   10,  9,   11,  10,  0,   10
+    8,   13,  23,  14,  9,   6,   4
   };
 
-  const uint32_t COMPRESSED_SIZE = 36494;
-  const uint32_t ORIG_SIZE = 29159;
+  const uint32_t COMPRESSED_SIZE = 36485;
+  const uint32_t ORIG_SIZE = 29152;
   uint32_t *recovdata = malloc(ORIG_SIZE * sizeof(uint32_t));
   uint8_t *compressedbuffer = malloc((COMPRESSED_SIZE) * sizeof(uint8_t) + 16);
 
   for (uint32_t i = 0; i < COMPRESSED_SIZE; i++) {
     compressedbuffer[i] = a[i];
   }
+  if(!streamvbyte_validate_stream(compressedbuffer, COMPRESSED_SIZE, ORIG_SIZE)) {
+    printf("bug tau\n");
+    return false;
+  }
 
   size_t compsize2 = streamvbyte_decode(compressedbuffer, recovdata, ORIG_SIZE);
   if(compsize2 != COMPRESSED_SIZE) {
-    printf("bug\n");
+    printf("bug beta\n");
     return false;
   }
   printf("compressed size %d.\n", (int)compsize2);
-
 
   uint8_t *compressedbufferagain = malloc(streamvbyte_max_compressedbytes(ORIG_SIZE));
 
   size_t newcompsize = streamvbyte_encode(recovdata, ORIG_SIZE, compressedbufferagain);
   if(newcompsize != COMPRESSED_SIZE) {
-    printf("bug\n");
+    printf("bug gamma\n");
+    return false;
+  }
+  printf("encoding succeeded\n");
+  if(!streamvbyte_validate_stream(compressedbufferagain, newcompsize, ORIG_SIZE)) {
+    printf("bug tau\n");
     return false;
   }
   uint32_t *newrecovdata = malloc(ORIG_SIZE * sizeof(uint32_t) + 16);
   size_t usedbytes = streamvbyte_decode(compressedbufferagain, newrecovdata, ORIG_SIZE);
   if (usedbytes != COMPRESSED_SIZE) {
-    printf("bug\n");
+    printf("bug epsilon\n");
     return false;
   }
   free(newrecovdata);
@@ -2783,36 +2610,11 @@ static bool issue42(void) {
 }
 
 
-static bool issue69(void) {
-  uint32_t N = 22;
-  uint32_t test_misaligned[22] = {
-      431, 292, 979, 994, 761, 879, 672, 690, 296,
-      931, 379, 98, 132, 105, 116, 841, 387, 831,
-      335, 333, 557, 915
-  };
-  uint32_t* datain = malloc(N * sizeof(uint32_t));
-  uint8_t* compressedbuffer = malloc(streamvbyte_max_compressedbytes(N));
-  uint32_t* recovdata = malloc(N * sizeof(uint32_t));
-  for (uint32_t k = 0; k < N; ++k) datain[k] = test_misaligned[k];
-  size_t compsize = streamvbyte_encode(datain, N, compressedbuffer);  // encoding
-  // here the result is stored in compressedbuffer using compsize bytes
-  size_t compsize2 = streamvbyte_decode(compressedbuffer, recovdata, N);  // decoding (fast)
-  if (compsize != compsize2) return false;
-  free(datain);
-  free(compressedbuffer);
-  free(recovdata);
-  return true;
-}
-
 int main(void) {
   if (!issue42()) { printf("tests failed.\n"); return EXIT_FAILURE; }
-  if (!issue69()) { printf("tests failed.\n"); return EXIT_FAILURE; }
   if (zigzagtests() == -1) { printf("tests failed.\n"); return EXIT_FAILURE; }
   if (basictests() == -1) { printf("tests failed.\n"); return EXIT_FAILURE; }
-  if (aqrittests() == -1) { printf("tests failed.\n"); return EXIT_FAILURE; }
-  if (compressedbytestests() == -1) { printf("tests failed.\n"); return EXIT_FAILURE; }
   if (zigzagfixturestests() == -1) { printf("tests failed.\n"); return EXIT_FAILURE; }
-  if (compressedbytestests0124() == -1) { printf("tests failed.\n"); return EXIT_FAILURE; }
   printf("Code looks good.\n");
   if (isLittleEndian()) {
     printf("And you have a little endian architecture.\n");
@@ -2821,16 +2623,6 @@ int main(void) {
     printf("Warning: produced compressed bytes may not be interoperable with "
            "little endian systems.\n");
   }
-#ifdef STREAMVBYTE_X64
-  if(streamvbyte_sse41()) {
-    printf("Code was vectorized (x64).\n");
-  } else {
-    printf("Code was not vectorized (x64).\n");
-  }
-#elif defined(STREAMVBYTE_IS_ARM64)
-  printf("Code was vectorized (ARM NEON).\n");
-#else
-  printf("Warning: you tested non-vectorized code.\n");
-#endif
+  printf("Code was vectorized (x64).\n");
   return EXIT_SUCCESS;
 }

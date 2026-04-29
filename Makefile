@@ -6,7 +6,7 @@
 PROCESSOR:=$(shell uname -m)
 
 
-CFLAGS = -fPIC -std=c99 -O3 -Wall -Wextra -pedantic -Wshadow
+CFLAGS = -fPIC -msse4 -std=c99 -O3 -Wall -Wextra -pedantic -Wshadow -g
 LDFLAGS = -shared
 LIBNAME=libstreamvbyte.so.0.0.1
 LNLIBNAME=libstreamvbyte.so
@@ -24,7 +24,7 @@ install: $(OBJECTS) $(LIBNAME)
 
 
 
-HEADERS=./include/streamvbyte.h ./include/streamvbytedelta.h ./include/streamvbyte_zigzag.h
+HEADERS=./include/streamvbyte.h ./include/streamvbyte_zigzag.h
 
 uninstall:
 	for h in $(HEADERS) ; do rm  /usr/local/$$h; done
@@ -33,23 +33,11 @@ uninstall:
 	ldconfig
 
 
-OBJECTS= streamvbyte_decode.o streamvbyte_encode.o streamvbytedelta_decode.o streamvbytedelta_encode.o streamvbyte_0124_encode.o  streamvbyte_0124_decode.o streamvbyte_zigzag.o
+OBJECTS= streamvbyte_decode.o streamvbyte_encode.o streamvbyte_zigzag.o
 
 streamvbyte_zigzag.o: ./src/streamvbyte_zigzag.c $(HEADERS)
 	$(CC) $(CFLAGS) -c ./src/streamvbyte_zigzag.c -Iinclude
 
-
-streamvbytedelta_encode.o: ./src/streamvbytedelta_encode.c $(HEADERS)
-	$(CC) $(CFLAGS) -c ./src/streamvbytedelta_encode.c -Iinclude
-
-streamvbytedelta_decode.o: ./src/streamvbytedelta_decode.c $(HEADERS)
-	$(CC) $(CFLAGS) -c ./src/streamvbytedelta_decode.c -Iinclude
-
-streamvbyte_0124_encode.o: ./src/streamvbyte_0124_encode.c $(HEADERS)
-	$(CC) $(CFLAGS) -c ./src/streamvbyte_0124_encode.c -Iinclude
-
-streamvbyte_0124_decode.o: ./src/streamvbyte_0124_decode.c $(HEADERS)
-	$(CC) $(CFLAGS) -c ./src/streamvbyte_0124_decode.c -Iinclude
 
 streamvbyte_decode.o: ./src/streamvbyte_decode.c $(HEADERS)
 	$(CC) $(CFLAGS) -c ./src/streamvbyte_decode.c -Iinclude

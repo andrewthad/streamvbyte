@@ -36,8 +36,8 @@ static void punt(long long n, char *s) {
 }
 
 int main(void) {
-#define N 500000U // Avoids VLA
-  const uint32_t NTrials = 100U;
+#define N 500032U // Avoids VLA
+  const uint32_t NTrials = 5000U;
   struct rusage before;
   struct rusage after;
   double t;
