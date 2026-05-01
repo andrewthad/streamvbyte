@@ -100,8 +100,6 @@ static const uint8_t len_lut[256] = {
 	10, 11, 12, 13, 11, 12, 13, 14, 12, 13, 14, 15, 13, 14, 15, 16,
 };
 
-static size_t svb_data_bytes_scalar(const uint32_t* in, uint32_t length);
-
 static inline size_t svb_control_SSE41 (__m128i lo, __m128i hi) {
     const __m128i mask_01 = _mm_set1_epi8(0x01);
     const __m128i mask_7F00 = _mm_set1_epi16(0x7F00);
@@ -118,10 +116,11 @@ static inline size_t svb_control_SSE41 (__m128i lo, __m128i hi) {
     return keys;
 }
 
+// Precondition: count is a multiple of 8
 static size_t svb_data_bytes_SSE41 (const uint32_t* in, uint32_t count) {
     size_t dataLen = 0;
 
-    for (const uint32_t* end = &in[(count & ~7U)]; in != end; in += 8)
+    for (const uint32_t* end = &in[count]; in != end; in += 8)
     {
         __m128i r0, r1;
         size_t keys;
@@ -134,11 +133,11 @@ static size_t svb_data_bytes_SSE41 (const uint32_t* in, uint32_t count) {
         dataLen += len_lut[keys >> 8];
     }
 
-    dataLen += svb_data_bytes_scalar(in, count & 7);
     return dataLen;
 }
 
-static size_t streamvbyte_encode_SSE41 (const uint32_t* in, uint32_t count, uint8_t* out) {
+// Precondition: count must be a multiple of 8
+size_t streamvbyte_encode(const uint32_t* in, uint32_t count, uint8_t* out) {
 	uint32_t keyLen = (count >> 2) + (((count & 3) + 3) >> 2); // 2-bits per each rounded up to byte boundary
 	uint8_t *restrict keyPtr = &out[0];
 	uint8_t *restrict dataPtr = &out[keyLen]; // variable length data after keys
@@ -167,40 +166,11 @@ static size_t streamvbyte_encode_SSE41 (const uint32_t* in, uint32_t count, uint
 		keyPtr += 2;
 	}
 
-	// do remaining
-	uint32_t key = 0;
-	for(size_t i = 0; i < (count & 7); i++)
-	{
-		uint32_t dw = in[i];
-		uint32_t symbol = (dw > 0x000000FF) + (dw > 0x0000FFFF) + (dw > 0x00FFFFFF);
-		key |= symbol << (i + i);
-		memcpy(dataPtr, &dw, 4);
-		dataPtr += 1 + symbol;
-	}
-	memcpy(keyPtr, &key, ((count & 7) + 3) >> 2);
-
 	return (size_t)(dataPtr - out);
-}
-
-static size_t svb_data_bytes_scalar(const uint32_t* in, uint32_t length) {
-   size_t db = 0;
-   for (uint32_t c = 0; c < length; c++) {
-      uint32_t val = in[c];
-      
-      uint32_t bytes = 1 + (val > 0x000000FF) + (val > 0x0000FFFF) + (val > 0x00FFFFFF);
-      db += bytes;
-   }
-   return db;
 }
 
 size_t streamvbyte_compressedbytes(const uint32_t* in, uint32_t length) {
    // number of control bytes:
    size_t cb = (length + 3) / 4;
    return cb + svb_data_bytes_SSE41(in, length);
-}
-
-// Encode an array of a given length read from in to out in streamvbyte format.
-// Returns the number of bytes written.
-size_t streamvbyte_encode(const uint32_t *in, uint32_t count, uint8_t *out) {
-  return streamvbyte_encode_SSE41(in,count,out);
 }
