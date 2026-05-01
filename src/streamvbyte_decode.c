@@ -336,13 +336,10 @@ static inline const uint8_t *svb_decode_sse41_simple(uint32_t *out,
 
 // Read count 32-bit integers in maskedvbyte format from in, storing the result
 // in out.  Returns the number of bytes read.
+// Precondition: The count must be a multiple of 32.
 size_t streamvbyte_decode(const uint8_t *in, uint32_t *out, uint32_t count) {
   if (count == 0)
     return 0;
-  if ((count % 32) != 0) {
-    fprintf(stderr, "Bad count: %llu\n", (long long unsigned)count);
-    exit(1);
-  }
 
   const uint8_t *keyPtr = in;               // full list of keys is next
   uint32_t keyLen = ((count + 3) / 4);      // 2-bits per key (rounded up)
@@ -356,8 +353,9 @@ size_t streamvbyte_decode(const uint8_t *in, uint32_t *out, uint32_t count) {
   return (size_t)(dataPtr - in);
 }
 
-bool streamvbyte_validate_stream(const uint8_t *in, size_t inCount,
-                                 uint32_t outCount) {
+bool streamvbyte_validate_stream(const uint8_t *in, size_t inCount, uint32_t outCount) {
+  if (outCount % 32 != 0)
+    return false;
   if (inCount == 0 || outCount == 0)
     return inCount == outCount;
 
