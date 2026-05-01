@@ -1,6 +1,5 @@
 #include "streamvbyte.h"
 #include "streamvbyte_zigzag.h"
-#include "streamvbyte_isadetection.h"
 
 #include <stdbool.h>
 #include <stdio.h>
