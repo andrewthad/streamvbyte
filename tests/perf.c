@@ -35,6 +35,10 @@ static void punt(long long n, char *s) {
   memmove(s, s + i + 1, (size_t)(127 - i));
 }
 
+double diff_timeval(struct timeval a, struct timeval b) {
+  return (double)(a.tv_sec - b.tv_sec) + (double)(a.tv_usec - b.tv_usec) / 1000000.0;
+}
+
 int main(void) {
 #define N 500032U // Avoids VLA
   const uint32_t NTrials = 5000U;
@@ -61,7 +65,7 @@ int main(void) {
 
   getrusage(RUSAGE_SELF, &after);
 
-  t = (after.ru_utime.tv_usec - before.ru_utime.tv_usec) / 1000000.0;
+  t = diff_timeval(after.ru_utime, before.ru_utime);
   punt((long long)(round((double)(N * NTrials) / t)), s);
   printf("encoding time = %f s,   %s uints/sec\n", t, s);
 
@@ -70,7 +74,7 @@ int main(void) {
   for (uint32_t i = 0; i < NTrials; i++)
     compsize2 = streamvbyte_decode(compressedbuffer, recovdata, N);
   getrusage(RUSAGE_SELF, &after);
-  t = (after.ru_utime.tv_usec - before.ru_utime.tv_usec) / 1000000.0;
+  t = diff_timeval(after.ru_utime, before.ru_utime);
   punt((long long)(round((double)(N * NTrials) / t)), s);
   printf("decoding time = %f s,   %s uints/sec\n", t, s);
   if (compsize != compsize2)

@@ -6,50 +6,32 @@
 PROCESSOR:=$(shell uname -m)
 
 
-CFLAGS = -fPIC -msse4 -std=c99 -O3 -Wall -Wextra -pedantic -Wshadow -g
+CFLAGS = -fvisibility=hidden -mbmi2 -mavx2 -msse4 -std=c99 -Os -Wall -Wextra -pedantic -Wshadow -g
 LDFLAGS = -shared
-LIBNAME=libstreamvbyte.so.0.0.1
 LNLIBNAME=libstreamvbyte.so
-all:  unit $(LIBNAME)
+all: unit
 test:
 	./unit
 dyntest:   dynunit $(LNLIBNAME)
 	LD_LIBRARY_PATH=. ./dynunit
 
-install: $(OBJECTS) $(LIBNAME)
-	cp $(LIBNAME) /usr/local/lib
-	ln -f -s /usr/local/lib/$(LIBNAME) /usr/local/lib/libstreamvbyte.so
-	ldconfig
-	cp $(HEADERS) /usr/local/include
-
-
-
 HEADERS=./include/streamvbyte.h ./include/streamvbyte_zigzag.h
 
 uninstall:
 	for h in $(HEADERS) ; do rm  /usr/local/$$h; done
-	rm  /usr/local/lib/$(LIBNAME)
 	rm /usr/local/lib/libstreamvbyte.so
 	ldconfig
-
 
 OBJECTS= streamvbyte_decode.o streamvbyte_encode.o streamvbyte_zigzag.o
 
 streamvbyte_zigzag.o: ./src/streamvbyte_zigzag.c $(HEADERS)
 	$(CC) $(CFLAGS) -c ./src/streamvbyte_zigzag.c -Iinclude
 
-
 streamvbyte_decode.o: ./src/streamvbyte_decode.c $(HEADERS)
 	$(CC) $(CFLAGS) -c ./src/streamvbyte_decode.c -Iinclude
 
 streamvbyte_encode.o: ./src/streamvbyte_encode.c $(HEADERS)
 	$(CC) $(CFLAGS) -c ./src/streamvbyte_encode.c -Iinclude
-
-$(LIBNAME): $(OBJECTS)
-	$(CC) $(CFLAGS) -o $(LIBNAME) $(OBJECTS)  $(LDFLAGS)
-
-$(LNLIBNAME): $(LIBNAME)
-	ln -f -s $(LIBNAME) $(LNLIBNAME)
 
 shuffle_tables: ./utils/shuffle_tables.c
 	$(CC) $(CFLAGS) -o shuffle_tables ./utils/shuffle_tables.c
@@ -72,8 +54,5 @@ writeseq: ./tests/writeseq.c    $(HEADERS) $(OBJECTS)
 unit: ./tests/unit.c    $(HEADERS) $(OBJECTS)
 	$(CC) $(CFLAGS) -o unit ./tests/unit.c -Iinclude -Isrc  $(OBJECTS)
 
-dynunit: ./tests/unit.c    $(HEADERS) $(LIBNAME) $(LNLIBNAME)
-	$(CC) $(CFLAGS) -o dynunit ./tests/unit.c -Iinclude -Isrc  -L. -lstreamvbyte
-
 clean:
-	rm -f unit *.o $(LIBNAME) $(LNLIBNAME)  example shuffle_tables perf writeseq dynunit
+	rm -f unit *.o $(LNLIBNAME)  example shuffle_tables perf writeseq dynunit
